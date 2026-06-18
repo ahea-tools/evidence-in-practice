@@ -11,5 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {},
-  "devDependencies": {}
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
 }
