@@ -1,0 +1,15 @@
+{
+  "name": "evidence-in-practice",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build && node scripts/serve.mjs",
+    "build": "tsc -p tsconfig.json && node scripts/build.mjs",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/**/*.test.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
