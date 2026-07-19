@@ -38,15 +38,15 @@ export function createToolHubLink(): HTMLAnchorElement {
 }
 
 function usagePanel(usage: UsageState | null): HTMLElement {
-  return el('section', { class: 'panel usage', 'aria-label': 'AHEA access and usage status' }, [
+  return el('section', { class: 'panel usage compactPanel', 'aria-label': 'AHEA access and usage status' }, [
     el('h2', {}, ['Access and usage']),
     el('dl', {}, [
       metric('Access status', unavailable(usage?.accessStatus)),
-      metric('Generations used', unavailable(usage?.generationsUsed)),
-      metric('Complimentary limit', unavailable(usage?.freeGenerationsLimit)),
-      metric('Remaining complimentary generations', unavailable(usage?.remainingFreeGenerations)),
+      metric('Used', unavailable(usage?.generationsUsed)),
+      metric('Limit', unavailable(usage?.freeGenerationsLimit)),
+      metric('Remaining', unavailable(usage?.remainingFreeGenerations)),
     ]),
-    el('p', {}, ['Verified users receive 2 complimentary generations total across all AHEA tools, controlled by the shared backend.']),
+    el('p', { class: 'quietCopy' }, ['Verified users receive 2 complimentary generations total across all AHEA tools. Access is controlled by the shared backend.']),
   ]);
 }
 
@@ -57,7 +57,7 @@ function metric(label: string, value: string): HTMLElement {
 function authPanel(needsAuth: boolean): HTMLElement | null {
   if (!needsAuth) return null;
   emailInput = el('input', { id: 'email', type: 'email', required: true }) as HTMLInputElement;
-  return el('section', { class: 'panel auth' }, [
+  return el('section', { class: 'panel auth compactPanel' }, [
     el('h2', {}, ['Sign in or verify your email']),
     el('p', {}, ['Use your email to continue. The shared AHEA backend verifies identity and determines generation access.']),
     el('form', { onsubmit: onAuthSubmit }, [
@@ -88,7 +88,10 @@ function listSection(title: string, items: string[]): HTMLElement {
 
 function results(output: EvidenceOutput | null): HTMLElement {
   if (!output) {
-    return el('section', { class: 'empty panel' }, [el('p', {}, ['Enter a topic to generate an Evidence in Practice brief grounded in backend-retrieved PubMed abstracts.'])]);
+    return el('section', { class: 'empty panel' }, [
+      el('p', { class: 'emptyKicker' }, ['Your brief will appear here']),
+      el('p', {}, ['Enter a topic to generate an Evidence in Practice brief grounded in backend-retrieved PubMed abstracts.']),
+    ]);
   }
 
   return el('article', { class: 'results' }, [
@@ -115,7 +118,7 @@ function inputForm(): HTMLElement {
   populationInput = el('input', { id: 'population', maxlength: MAX_FIELD }) as HTMLInputElement;
   settingInput = el('input', { id: 'setting', maxlength: MAX_FIELD }) as HTMLInputElement;
 
-  return el('section', { class: 'panel' }, [
+  return el('section', { class: 'panel formPanel' }, [
     el('h2', {}, ['Generate a practice brief']),
     el('form', { class: 'toolForm', onsubmit: onGenerateSubmit }, [
       el('label', { for: 'topic' }, ['Topic or evidence question']),
@@ -132,6 +135,19 @@ function inputForm(): HTMLElement {
     el('div', { class: 'status', 'aria-live': 'polite' }, [state.status]),
     state.error ? el('p', { role: 'alert', class: 'error' }, [state.error]) : null,
     state.blocked ? blockedPanel(state.blocked) : null,
+  ]);
+}
+
+function receivePanel(): HTMLElement {
+  const items = [
+    'A concise evidence snapshot for practice and policy conversations.',
+    'Action-oriented takeaways, implementation considerations, and equity considerations.',
+    'Evidence gaps and source citations from backend-reviewed PubMed abstracts.',
+  ];
+
+  return el('section', { class: 'panel receivePanel' }, [
+    el('h2', {}, ['You will receive']),
+    el('ul', {}, items.map((item) => el('li', {}, [item]))),
   ]);
 }
 
@@ -206,10 +222,18 @@ export function render(): void {
         el('h1', {}, ['Evidence in Practice']),
         el('p', { class: 'lede' }, ['Translate public health and health sciences literature into practical insights, equity considerations, implementation guidance, evidence gaps, and action-oriented takeaways for programs, policy, and practice.']),
       ]),
-      usagePanel(state.usage),
-      authPanel(needsAuth),
-      inputForm(),
-      results(state.output),
+      el('div', { class: 'terracottaRule', 'aria-hidden': 'true' }, []),
+      el('div', { class: 'workspace' }, [
+        el('aside', { class: 'sideRail' }, [
+          usagePanel(state.usage),
+          authPanel(needsAuth),
+          receivePanel(),
+        ]),
+        el('div', { class: 'mainRail' }, [
+          inputForm(),
+          results(state.output),
+        ]),
+      ]),
       createToolHubLink(),
     ]),
   ]);
