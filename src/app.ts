@@ -9,22 +9,28 @@ const unavailable = (value: unknown): string => (value === undefined || value ==
 
 export type AppState = {
   usage: UsageState | null;
+  accountStatus: 'loading' | 'ready' | 'error';
+  accountError: string;
   output: EvidenceOutput | null;
   loading: boolean;
   status: string;
   error: string;
   blocked: UsageState | null;
   authMessage: string;
+  authEmail: string;
 };
 
 const state: AppState = {
   usage: null,
+  accountStatus: 'loading',
+  accountError: '',
   output: null,
   loading: false,
   status: '',
   error: '',
   blocked: null,
   authMessage: '',
+  authEmail: '',
 };
 
 let root: HTMLElement;
@@ -38,45 +44,71 @@ export function createToolHubLink(): HTMLAnchorElement {
 }
 
 function usagePanel(usage: UsageState | null): HTMLElement {
-  return el('section', { class: 'panel usage', 'aria-label': 'AHEA access and usage status' }, [
-    el('h2', {}, ['Access and usage']),
-    el('dl', {}, [
-      metric('Access status', unavailable(usage?.accessStatus)),
-      metric('Generations used', unavailable(usage?.generationsUsed)),
-      metric('Complimentary limit', unavailable(usage?.freeGenerationsLimit)),
-      metric('Remaining complimentary generations', unavailable(usage?.remainingFreeGenerations)),
-    ]),
-    el('p', {}, ['Verified users receive 2 complimentary generations total across all AHEA tools, controlled by the shared backend.']),
-  ]);
-}
+  if (state.accountStatus === 'loading') {
+    return el('section', { class: 'accessNotice', 'aria-label': 'AHEA access and usage status' }, [
+      el('p', {}, ['Loading account status…']),
+    ]);
+  }
 
-function metric(label: string, value: string): HTMLElement {
-  return el('div', {}, [el('dt', {}, [label]), el('dd', {}, [value])]);
+  if (state.accountStatus === 'error') {
+    return el('section', { class: 'accessNotice accountError', 'aria-label': 'AHEA access and usage status' }, [
+      el('p', {}, [state.accountError || 'Account status could not be loaded. Please try again before signing in or generating.']),
+      el('button', { class: 'secondaryButton', type: 'button', onclick: onAccountRetry }, ['Retry account status']),
+    ]);
+  }
+
+  const authCopy = usage?.authenticated === false || usage?.verified === false ? 'Authentication required.' : 'Access information.';
+  return el('section', { class: 'accessNotice', 'aria-label': 'AHEA access and usage status' }, [
+    el('p', {}, [authCopy]),
+    el('p', {}, [
+      `Generations used: ${unavailable(usage?.generationsUsed)} • Free limit: ${unavailable(usage?.freeGenerationsLimit)} • Remaining free generations: ${unavailable(usage?.remainingFreeGenerations)} • Access status: ${unavailable(usage?.accessStatus)}.`,
+    ]),
+    el('p', { class: 'quietCopy' }, ['Verified users receive 2 complimentary generations total across all AHEA tools.']),
+  ]);
 }
 
 function authPanel(needsAuth: boolean): HTMLElement | null {
   if (!needsAuth) return null;
-  emailInput = el('input', { id: 'email', type: 'email', required: true }) as HTMLInputElement;
-  return el('section', { class: 'panel auth' }, [
-    el('h2', {}, ['Sign in or verify your email']),
-    el('p', {}, ['Use your email to continue. The shared AHEA backend verifies identity and determines generation access.']),
+  emailInput = el('input', { id: 'email', type: 'email', required: true, placeholder: 'you@example.org', value: state.authEmail, oninput: onEmailInput }) as HTMLInputElement;
+  return el('section', { class: 'authBox' }, [
+    el('p', {}, ['Please sign in or verify your email to use AHEA tools. The shared AHEA backend verifies identity and determines generation access.']),
     el('form', { onsubmit: onAuthSubmit }, [
       el('label', { for: 'email' }, ['Email address']),
-      el('div', { class: 'inline' }, [emailInput, el('button', { type: 'submit', disabled: state.loading }, [state.loading ? 'Sending…' : 'Send sign-in link'])]),
+      emailInput,
+      el('button', { class: 'secondaryButton', type: 'submit', disabled: state.loading }, [state.loading ? 'Sending…' : 'Send sign-in link']),
     ]),
     state.authMessage ? el('p', { role: 'status' }, [state.authMessage]) : null,
   ]);
 }
 
+function onEmailInput(event: Event): void {
+  state.authEmail = (event.target as HTMLInputElement).value;
+}
+
 async function onAuthSubmit(event: Event): Promise<void> {
   event.preventDefault();
+  const email = emailInput.value.trim();
+  state.authEmail = email;
+
+  if (!email) {
+    state.authMessage = 'Please enter an email address.';
+    render();
+    return;
+  }
+
   state.loading = true;
   state.authMessage = '';
   render();
-  const result = await startAuth(emailInput.value.trim());
-  state.authMessage = result.message ?? (result.ok ? 'Check your email for the secure sign-in link.' : 'We could not start sign-in. Please try again in a moment.');
-  state.loading = false;
-  render();
+
+  try {
+    const result = await startAuth(email);
+    state.authMessage = result.message ?? (result.ok ? 'Check your email for the secure sign-in link.' : 'We could not start sign-in. Please try again in a moment.');
+  } catch {
+    state.authMessage = 'We could not start sign-in. Please try again in a moment.';
+  } finally {
+    state.loading = false;
+    render();
+  }
 }
 
 function listSection(title: string, items: string[]): HTMLElement {
@@ -86,10 +118,8 @@ function listSection(title: string, items: string[]): HTMLElement {
   ]);
 }
 
-function results(output: EvidenceOutput | null): HTMLElement {
-  if (!output) {
-    return el('section', { class: 'empty panel' }, [el('p', {}, ['Enter a topic to generate an Evidence in Practice brief grounded in backend-retrieved PubMed abstracts.'])]);
-  }
+function results(output: EvidenceOutput | null): HTMLElement | null {
+  if (!output) return null;
 
   return el('article', { class: 'results' }, [
     el('section', { class: 'resultSection' }, [el('h2', {}, ['Evidence Snapshot']), el('p', {}, [output.evidenceSnapshot])]),
@@ -115,7 +145,9 @@ function inputForm(): HTMLElement {
   populationInput = el('input', { id: 'population', maxlength: MAX_FIELD }) as HTMLInputElement;
   settingInput = el('input', { id: 'setting', maxlength: MAX_FIELD }) as HTMLInputElement;
 
-  return el('section', { class: 'panel' }, [
+  return el('section', { class: 'panel formPanel' }, [
+    usagePanel(state.usage),
+    authPanel(state.usage?.authenticated === false || state.usage?.verified === false),
     el('h2', {}, ['Generate a practice brief']),
     el('form', { class: 'toolForm', onsubmit: onGenerateSubmit }, [
       el('label', { for: 'topic' }, ['Topic or evidence question']),
@@ -127,11 +159,17 @@ function inputForm(): HTMLElement {
       el('label', { for: 'setting' }, ['Setting or context, optional']),
       el('p', { class: 'helper' }, ['Optional. Add a setting such as schools, clinics, community programs, public health agencies, or policy environments.']),
       settingInput,
-      el('button', { class: 'primary', type: 'submit', disabled: state.loading }, [state.loading ? 'Generating…' : 'Generate Evidence in Practice Brief']),
+      el('button', { class: 'primary', type: 'submit', disabled: state.loading || state.accountStatus !== 'ready' }, [state.loading ? 'Generating…' : 'Generate Evidence in Practice Brief']),
     ]),
     el('div', { class: 'status', 'aria-live': 'polite' }, [state.status]),
     state.error ? el('p', { role: 'alert', class: 'error' }, [state.error]) : null,
     state.blocked ? blockedPanel(state.blocked) : null,
+  ]);
+}
+
+function receivePanel(): HTMLElement {
+  return el('section', { class: 'panel receivePanel' }, [
+    el('p', {}, ['You will receive: Evidence Snapshot, Key Takeaways, What Appears Most Effective, Context and Applicability, Equity Considerations, Practice Considerations, Evidence Gaps and Unanswered Questions, and Sources Reviewed.']),
   ]);
 }
 
@@ -149,16 +187,31 @@ export function validateInput(input: GenerationInput): string | null {
 }
 
 async function refreshMe(): Promise<void> {
+  state.accountStatus = 'loading';
+  state.accountError = '';
   try {
     state.usage = await fetchMe();
+    state.accountStatus = 'ready';
   } catch {
     state.usage = null;
+    state.accountStatus = 'error';
+    state.accountError = 'Account status could not be loaded. Please try again before signing in or generating.';
   }
+}
+
+async function onAccountRetry(): Promise<void> {
+  await refreshMe();
+  render();
 }
 
 async function onGenerateSubmit(event: Event): Promise<void> {
   event.preventDefault();
   state.error = '';
+  if (state.accountStatus !== 'ready') {
+    state.error = 'Account status could not be loaded. Please try again before signing in or generating.';
+    render();
+    return;
+  }
   state.status = '';
   state.blocked = null;
 
@@ -198,18 +251,23 @@ async function onGenerateSubmit(event: Event): Promise<void> {
 }
 
 export function render(): void {
-  const needsAuth = state.usage?.authenticated === false || state.usage?.verified === false;
   replaceChildren(root, [
     el('main', { class: 'shell' }, [
       el('header', {}, [
-        el('p', { class: 'eyebrow' }, ['American Health Equity Alliance · AHEA Tools']),
+        el('p', { class: 'eyebrow' }, ['AMERICAN HEALTH EQUITY ASSOCIATION']),
         el('h1', {}, ['Evidence in Practice']),
         el('p', { class: 'lede' }, ['Translate public health and health sciences literature into practical insights, equity considerations, implementation guidance, evidence gaps, and action-oriented takeaways for programs, policy, and practice.']),
       ]),
-      usagePanel(state.usage),
-      authPanel(needsAuth),
-      inputForm(),
-      results(state.output),
+      el('div', { class: 'terracottaRule', 'aria-hidden': 'true' }, []),
+      el('div', { class: 'workspace' }, [
+        el('div', { class: 'mainRail' }, [
+          inputForm(),
+        ]),
+        el('aside', { class: 'sideRail' }, [
+          receivePanel(),
+          results(state.output),
+        ]),
+      ]),
       createToolHubLink(),
     ]),
   ]);
@@ -217,6 +275,7 @@ export function render(): void {
 
 export async function mount(target: HTMLElement): Promise<void> {
   root = target;
+  render();
   await refreshMe();
   render();
 }
