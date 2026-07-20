@@ -17,6 +17,7 @@ export type AppState = {
   error: string;
   blocked: UsageState | null;
   authMessage: string;
+  authEmail: string;
 };
 
 const state: AppState = {
@@ -29,6 +30,7 @@ const state: AppState = {
   error: '',
   blocked: null,
   authMessage: '',
+  authEmail: '',
 };
 
 let root: HTMLElement;
@@ -67,7 +69,7 @@ function usagePanel(usage: UsageState | null): HTMLElement {
 
 function authPanel(needsAuth: boolean): HTMLElement | null {
   if (!needsAuth) return null;
-  emailInput = el('input', { id: 'email', type: 'email', required: true, placeholder: 'you@example.org' }) as HTMLInputElement;
+  emailInput = el('input', { id: 'email', type: 'email', required: true, placeholder: 'you@example.org', value: state.authEmail, oninput: onEmailInput }) as HTMLInputElement;
   return el('section', { class: 'authBox' }, [
     el('p', {}, ['Please sign in or verify your email to use AHEA tools. The shared AHEA backend verifies identity and determines generation access.']),
     el('form', { onsubmit: onAuthSubmit }, [
@@ -79,15 +81,34 @@ function authPanel(needsAuth: boolean): HTMLElement | null {
   ]);
 }
 
+function onEmailInput(event: Event): void {
+  state.authEmail = (event.target as HTMLInputElement).value;
+}
+
 async function onAuthSubmit(event: Event): Promise<void> {
   event.preventDefault();
+  const email = emailInput.value.trim();
+  state.authEmail = email;
+
+  if (!email) {
+    state.authMessage = 'Please enter an email address.';
+    render();
+    return;
+  }
+
   state.loading = true;
   state.authMessage = '';
   render();
-  const result = await startAuth(emailInput.value.trim());
-  state.authMessage = result.message ?? (result.ok ? 'Check your email for the secure sign-in link.' : 'We could not start sign-in. Please try again in a moment.');
-  state.loading = false;
-  render();
+
+  try {
+    const result = await startAuth(email);
+    state.authMessage = result.message ?? (result.ok ? 'Check your email for the secure sign-in link.' : 'We could not start sign-in. Please try again in a moment.');
+  } catch {
+    state.authMessage = 'We could not start sign-in. Please try again in a moment.';
+  } finally {
+    state.loading = false;
+    render();
+  }
 }
 
 function listSection(title: string, items: string[]): HTMLElement {

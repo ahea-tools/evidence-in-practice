@@ -4,7 +4,7 @@ import test from 'node:test';
 import { generateEvidence, normalizeUsage, startAuth, fetchMe } from '../src/api.js';
 import { AHEA_TOOLS_HUB_URL, TOOL_ID } from '../src/constants.js';
 import { isEvidenceOutput } from '../src/schema.js';
-import { validateInput } from '../src/app.js';
+import { mount, validateInput } from '../src/app.js';
 
 const validOutput = {
   evidenceSnapshot: 'Snapshot',
@@ -16,6 +16,75 @@ const validOutput = {
   evidenceGapsAndUnansweredQuestions: ['Gap'],
   sourcesReviewed: [{ title: 'Article', year: 2024, journal: 'Journal', pmid: '123', pubmedUrl: 'https://pubmed.ncbi.nlm.nih.gov/123/' }],
 };
+
+
+type TestListener = (event: Event) => void | Promise<void>;
+
+class TestTextNode {
+  readonly nodeType = 3;
+  constructor(readonly textContent: string) {}
+}
+
+class TestElement {
+  readonly nodeType = 1;
+  readonly childNodes: Array<TestElement | TestTextNode> = [];
+  readonly attrs = new Map<string, string>();
+  readonly listeners = new Map<string, TestListener[]>();
+  value = '';
+  disabled = false;
+
+  constructor(readonly tagName: string) {}
+
+  setAttribute(key: string, value: string): void {
+    this.attrs.set(key, value);
+    if (key === 'value') this.value = value;
+    if (key === 'disabled') this.disabled = true;
+  }
+
+  addEventListener(eventName: string, listener: TestListener): void {
+    this.listeners.set(eventName, [...(this.listeners.get(eventName) ?? []), listener]);
+  }
+
+  appendChild(child: TestElement | TestTextNode): void {
+    this.childNodes.push(child);
+  }
+
+  replaceChildren(): void {
+    this.childNodes.splice(0);
+  }
+
+  get textContent(): string {
+    return this.childNodes.map((child) => child.textContent).join('');
+  }
+
+  querySelector(selector: string): TestElement | null {
+    if (selector.startsWith('#') && this.attrs.get('id') === selector.slice(1)) return this;
+    if (!selector.startsWith('#') && this.tagName === selector) return this;
+    for (const child of this.childNodes) {
+      if (child instanceof TestElement) {
+        const match = child.querySelector(selector);
+        if (match) return match;
+      }
+    }
+    return null;
+  }
+}
+
+function setupDocument(): TestElement {
+  const root = new TestElement('div');
+  (globalThis as unknown as { document: { createElement: (tag: string) => TestElement; createTextNode: (text: string) => TestTextNode } }).document = {
+    createElement: (tag: string): TestElement => new TestElement(tag),
+    createTextNode: (text: string): TestTextNode => new TestTextNode(text),
+  };
+  return root;
+}
+
+async function submitAuthForm(root: TestElement): Promise<void> {
+  const form = root.querySelector('form');
+  const listener = form?.listeners.get('submit')?.[0];
+  if (!listener) throw new Error('Missing auth form submit listener');
+  await listener({ preventDefault: () => undefined } as Event);
+}
 
 type MockCall = { input: string | URL | Request; init?: RequestInit | undefined };
 
@@ -80,6 +149,74 @@ test('auth/start sends email, toolId, and credentials include', async () => {
   assert.equal(calls[0]?.init?.method, 'POST');
   assert.equal(calls[0]?.init?.credentials, 'include');
   assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), { email: 'person@example.org', toolId: 'evidence-in-practice' });
+});
+
+
+test('auth form captures entered email before loading rerender and preserves it visibly', async () => {
+  const root = setupDocument();
+  const calls: MockCall[] = [];
+  let resolveAuth: ((response: Response) => void) | undefined;
+  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    calls.push({ input, init });
+    if (String(input).endsWith('/api/me')) {
+      return new Response(JSON.stringify({ authenticated: false, verified: false, generationsUsed: 0 }), { status: 200 });
+    }
+    return new Promise<Response>((resolve) => {
+      resolveAuth = resolve;
+    });
+  };
+
+  await mount(root as unknown as HTMLElement);
+  const emailInput = root.querySelector('#email');
+  if (!emailInput) throw new Error('Missing email input');
+  emailInput.value = ' person@example.com ';
+
+  const submitPromise = submitAuthForm(root);
+  const authCall = calls.find((call) => String(call.input).endsWith('/api/auth/start'));
+  assert.deepEqual(JSON.parse(String(authCall?.init?.body)), { email: 'person@example.com', toolId: 'evidence-in-practice' });
+  assert.equal(authCall?.init?.credentials, 'include');
+  assert.equal(root.querySelector('#email')?.value, 'person@example.com');
+  assert.match(root.textContent, /Sending…/);
+
+  resolveAuth?.(new Response(JSON.stringify({ message: 'Check your email.' }), { status: 200 }));
+  await submitPromise;
+  assert.match(root.textContent, /Check your email\./);
+  assert.equal(root.querySelector('#email')?.value, 'person@example.com');
+});
+
+test('empty auth email does not call backend and asks for an email address', async () => {
+  const root = setupDocument();
+  const calls = mockFetch([{ ok: true, body: { authenticated: false, verified: false } }]);
+  await mount(root as unknown as HTMLElement);
+  const emailInput = root.querySelector('#email');
+  if (!emailInput) throw new Error('Missing email input');
+  emailInput.value = '   ';
+
+  await submitAuthForm(root);
+  assert.equal(calls.filter((call) => String(call.input).endsWith('/api/auth/start')).length, 0);
+  assert.match(root.textContent, /Please enter an email address\./);
+});
+
+test('rejected auth request restores loading state and displays calm error', async () => {
+  const root = setupDocument();
+  const calls: MockCall[] = [];
+  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    calls.push({ input, init });
+    if (String(input).endsWith('/api/me')) {
+      return new Response(JSON.stringify({ authenticated: false, verified: false }), { status: 200 });
+    }
+    throw new Error('network down');
+  };
+
+  await mount(root as unknown as HTMLElement);
+  const emailInput = root.querySelector('#email');
+  if (!emailInput) throw new Error('Missing email input');
+  emailInput.value = 'person@example.com';
+
+  await submitAuthForm(root);
+  assert.match(root.textContent, /We could not start sign-in\. Please try again in a moment\./);
+  assert.match(root.textContent, /Send sign-in link/);
+  assert.equal(calls.find((call) => String(call.input).endsWith('/api/auth/start'))?.init?.credentials, 'include');
 });
 
 test('generate sends toolId, credentials, and omits blank optional fields', async () => {
