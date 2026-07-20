@@ -14,6 +14,16 @@ async function safeJson(response: Response): Promise<unknown> {
   }
 }
 
+async function requiredJson(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) throw new Error('Missing JSON response.');
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new Error('Invalid JSON response.');
+  }
+}
+
 function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
 }
@@ -33,15 +43,11 @@ export function normalizeUsage(raw: unknown): UsageState {
   const body = record(raw);
   const generationsUsed = numericDisplay(pickTopFirst(body, 'generationsUsed'));
   const freeGenerationsLimit = numericDisplay(pickTopFirst(body, 'freeGenerationsLimit'));
-  const explicitRemaining = numericDisplay(pickTopFirst(body, 'remainingFreeGenerations')) ?? numericDisplay(pickTopFirst(body, 'freeGenerationsRemaining'));
-  const fallbackRemaining = explicitRemaining === undefined && typeof generationsUsed === 'number' && typeof freeGenerationsLimit === 'number'
-    ? Math.max(freeGenerationsLimit - generationsUsed, 0)
-    : undefined;
+  const remainingFreeGenerations = numericDisplay(pickTopFirst(body, 'remainingFreeGenerations')) ?? numericDisplay(pickTopFirst(body, 'freeGenerationsRemaining'));
 
   const usage: UsageState = {
     blocked: pick(body, 'blocked') === true || pick(body, 'paywalled') === true,
   };
-  const remainingFreeGenerations = explicitRemaining ?? fallbackRemaining;
   const accessStatus = textDisplay(pick(body, 'accessStatus')) ?? textDisplay(pick(body, 'status')) ?? textDisplay(pick(body, 'accessState'));
   const message = textDisplay(pick(body, 'message'));
   const paywallUrl = textDisplay(pick(body, 'paywallUrl'));
@@ -65,7 +71,15 @@ export async function fetchMe(): Promise<UsageState> {
     method: 'GET',
     credentials: 'include',
   });
-  return normalizeUsage(await safeJson(response));
+  if (!response.ok) throw new Error('Account status request failed.');
+
+  const body = await requiredJson(response);
+  const usage = normalizeUsage(body);
+  if (usage.authenticated === undefined && usage.verified === undefined) {
+    throw new Error('Account status response is missing authentication state.');
+  }
+
+  return usage;
 }
 
 export async function startAuth(email: string): Promise<{ ok: boolean; message?: string }> {
@@ -73,7 +87,7 @@ export async function startAuth(email: string): Promise<{ ok: boolean; message?:
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, toolId: TOOL_ID }),
+    body: JSON.stringify({ email: email.trim(), toolId: TOOL_ID }),
   });
   const body = record(await safeJson(response));
   const message = textDisplay(body.message);
@@ -84,19 +98,28 @@ export type GenerateResult =
   | { kind: 'success'; output: EvidenceOutput; usage: UsageState }
   | { kind: 'blocked' | 'error' | 'invalid'; message: string; usage: UsageState };
 
+function generationPayload(input: GenerationInput): { topic: string; population?: string; setting?: string } {
+  const payload: { topic: string; population?: string; setting?: string } = { topic: input.topic.trim() };
+  const population = input.population.trim();
+  const setting = input.setting.trim();
+  if (population) payload.population = population;
+  if (setting) payload.setting = setting;
+  return payload;
+}
+
 export async function generateEvidence(input: GenerationInput): Promise<GenerateResult> {
   const response = await fetch(endpoint('/api/generate'), {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ toolId: TOOL_ID, input }),
+    body: JSON.stringify({ toolId: TOOL_ID, input: generationPayload(input) }),
   });
   const body = record(await safeJson(response));
   const usage = normalizeUsage(body);
   const message = textDisplay(pick(body, 'message')) ?? 'We couldn’t complete this request. Please try again in a moment.';
 
   if (!response.ok) return { kind: usage.blocked ? 'blocked' : 'error', message, usage };
-  if (body.status !== undefined && body.status !== 'success') return { kind: usage.blocked ? 'blocked' : 'error', message, usage };
+  if (body.status !== undefined && body.status !== 'success' && body.status !== 'insufficient_evidence') return { kind: usage.blocked ? 'blocked' : 'error', message, usage };
   if (!isEvidenceOutput(body.output)) {
     return { kind: 'invalid', message: 'We received the response, but could not display it in the expected format. Please try again in a moment.', usage };
   }
