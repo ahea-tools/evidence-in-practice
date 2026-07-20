@@ -9,6 +9,8 @@ const unavailable = (value: unknown): string => (value === undefined || value ==
 
 export type AppState = {
   usage: UsageState | null;
+  accountStatus: 'loading' | 'ready' | 'error';
+  accountError: string;
   output: EvidenceOutput | null;
   loading: boolean;
   status: string;
@@ -19,6 +21,8 @@ export type AppState = {
 
 const state: AppState = {
   usage: null,
+  accountStatus: 'loading',
+  accountError: '',
   output: null,
   loading: false,
   status: '',
@@ -38,6 +42,19 @@ export function createToolHubLink(): HTMLAnchorElement {
 }
 
 function usagePanel(usage: UsageState | null): HTMLElement {
+  if (state.accountStatus === 'loading') {
+    return el('section', { class: 'accessNotice', 'aria-label': 'AHEA access and usage status' }, [
+      el('p', {}, ['Loading account status…']),
+    ]);
+  }
+
+  if (state.accountStatus === 'error') {
+    return el('section', { class: 'accessNotice accountError', 'aria-label': 'AHEA access and usage status' }, [
+      el('p', {}, [state.accountError || 'Account status could not be loaded. Please try again before signing in or generating.']),
+      el('button', { class: 'secondaryButton', type: 'button', onclick: onAccountRetry }, ['Retry account status']),
+    ]);
+  }
+
   const authCopy = usage?.authenticated === false || usage?.verified === false ? 'Authentication required.' : 'Access information.';
   return el('section', { class: 'accessNotice', 'aria-label': 'AHEA access and usage status' }, [
     el('p', {}, [authCopy]),
@@ -121,7 +138,7 @@ function inputForm(): HTMLElement {
       el('label', { for: 'setting' }, ['Setting or context, optional']),
       el('p', { class: 'helper' }, ['Optional. Add a setting such as schools, clinics, community programs, public health agencies, or policy environments.']),
       settingInput,
-      el('button', { class: 'primary', type: 'submit', disabled: state.loading }, [state.loading ? 'Generating…' : 'Generate Evidence in Practice Brief']),
+      el('button', { class: 'primary', type: 'submit', disabled: state.loading || state.accountStatus !== 'ready' }, [state.loading ? 'Generating…' : 'Generate Evidence in Practice Brief']),
     ]),
     el('div', { class: 'status', 'aria-live': 'polite' }, [state.status]),
     state.error ? el('p', { role: 'alert', class: 'error' }, [state.error]) : null,
@@ -149,16 +166,31 @@ export function validateInput(input: GenerationInput): string | null {
 }
 
 async function refreshMe(): Promise<void> {
+  state.accountStatus = 'loading';
+  state.accountError = '';
   try {
     state.usage = await fetchMe();
+    state.accountStatus = 'ready';
   } catch {
     state.usage = null;
+    state.accountStatus = 'error';
+    state.accountError = 'Account status could not be loaded. Please try again before signing in or generating.';
   }
+}
+
+async function onAccountRetry(): Promise<void> {
+  await refreshMe();
+  render();
 }
 
 async function onGenerateSubmit(event: Event): Promise<void> {
   event.preventDefault();
   state.error = '';
+  if (state.accountStatus !== 'ready') {
+    state.error = 'Account status could not be loaded. Please try again before signing in or generating.';
+    render();
+    return;
+  }
   state.status = '';
   state.blocked = null;
 
@@ -222,6 +254,7 @@ export function render(): void {
 
 export async function mount(target: HTMLElement): Promise<void> {
   root = target;
+  render();
   await refreshMe();
   render();
 }

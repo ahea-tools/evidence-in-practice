@@ -136,6 +136,11 @@ h3 {
   margin-top: 6px;
 }
 
+.accountError {
+  display: grid;
+  gap: 12px;
+}
+
 .quietCopy {
   color: #65736f;
 }
