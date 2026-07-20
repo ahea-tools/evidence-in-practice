@@ -38,31 +38,25 @@ export function createToolHubLink(): HTMLAnchorElement {
 }
 
 function usagePanel(usage: UsageState | null): HTMLElement {
-  return el('section', { class: 'panel usage compactPanel', 'aria-label': 'AHEA access and usage status' }, [
-    el('h2', {}, ['Access and usage']),
-    el('dl', {}, [
-      metric('Access status', unavailable(usage?.accessStatus)),
-      metric('Used', unavailable(usage?.generationsUsed)),
-      metric('Limit', unavailable(usage?.freeGenerationsLimit)),
-      metric('Remaining', unavailable(usage?.remainingFreeGenerations)),
+  const authCopy = usage?.authenticated === false || usage?.verified === false ? 'Authentication required.' : 'Access information.';
+  return el('section', { class: 'accessNotice', 'aria-label': 'AHEA access and usage status' }, [
+    el('p', {}, [authCopy]),
+    el('p', {}, [
+      `Generations used: ${unavailable(usage?.generationsUsed)} • Free limit: ${unavailable(usage?.freeGenerationsLimit)} • Remaining free generations: ${unavailable(usage?.remainingFreeGenerations)} • Access status: ${unavailable(usage?.accessStatus)}.`,
     ]),
-    el('p', { class: 'quietCopy' }, ['Verified users receive 2 complimentary generations total across all AHEA tools. Access is controlled by the shared backend.']),
+    el('p', { class: 'quietCopy' }, ['Verified users receive 2 complimentary generations total across all AHEA tools.']),
   ]);
-}
-
-function metric(label: string, value: string): HTMLElement {
-  return el('div', {}, [el('dt', {}, [label]), el('dd', {}, [value])]);
 }
 
 function authPanel(needsAuth: boolean): HTMLElement | null {
   if (!needsAuth) return null;
-  emailInput = el('input', { id: 'email', type: 'email', required: true }) as HTMLInputElement;
-  return el('section', { class: 'panel auth compactPanel' }, [
-    el('h2', {}, ['Sign in or verify your email']),
-    el('p', {}, ['Use your email to continue. The shared AHEA backend verifies identity and determines generation access.']),
+  emailInput = el('input', { id: 'email', type: 'email', required: true, placeholder: 'you@example.org' }) as HTMLInputElement;
+  return el('section', { class: 'authBox' }, [
+    el('p', {}, ['Please sign in or verify your email to use AHEA tools. The shared AHEA backend verifies identity and determines generation access.']),
     el('form', { onsubmit: onAuthSubmit }, [
       el('label', { for: 'email' }, ['Email address']),
-      el('div', { class: 'inline' }, [emailInput, el('button', { type: 'submit', disabled: state.loading }, [state.loading ? 'Sending…' : 'Send sign-in link'])]),
+      emailInput,
+      el('button', { class: 'secondaryButton', type: 'submit', disabled: state.loading }, [state.loading ? 'Sending…' : 'Send sign-in link']),
     ]),
     state.authMessage ? el('p', { role: 'status' }, [state.authMessage]) : null,
   ]);
@@ -86,13 +80,8 @@ function listSection(title: string, items: string[]): HTMLElement {
   ]);
 }
 
-function results(output: EvidenceOutput | null): HTMLElement {
-  if (!output) {
-    return el('section', { class: 'empty panel' }, [
-      el('p', { class: 'emptyKicker' }, ['Your brief will appear here']),
-      el('p', {}, ['Enter a topic to generate an Evidence in Practice brief grounded in backend-retrieved PubMed abstracts.']),
-    ]);
-  }
+function results(output: EvidenceOutput | null): HTMLElement | null {
+  if (!output) return null;
 
   return el('article', { class: 'results' }, [
     el('section', { class: 'resultSection' }, [el('h2', {}, ['Evidence Snapshot']), el('p', {}, [output.evidenceSnapshot])]),
@@ -119,6 +108,8 @@ function inputForm(): HTMLElement {
   settingInput = el('input', { id: 'setting', maxlength: MAX_FIELD }) as HTMLInputElement;
 
   return el('section', { class: 'panel formPanel' }, [
+    usagePanel(state.usage),
+    authPanel(state.usage?.authenticated === false || state.usage?.verified === false),
     el('h2', {}, ['Generate a practice brief']),
     el('form', { class: 'toolForm', onsubmit: onGenerateSubmit }, [
       el('label', { for: 'topic' }, ['Topic or evidence question']),
@@ -139,15 +130,8 @@ function inputForm(): HTMLElement {
 }
 
 function receivePanel(): HTMLElement {
-  const items = [
-    'A concise evidence snapshot for practice and policy conversations.',
-    'Action-oriented takeaways, implementation considerations, and equity considerations.',
-    'Evidence gaps and source citations from backend-reviewed PubMed abstracts.',
-  ];
-
   return el('section', { class: 'panel receivePanel' }, [
-    el('h2', {}, ['You will receive']),
-    el('ul', {}, items.map((item) => el('li', {}, [item]))),
+    el('p', {}, ['You will receive: Evidence Snapshot, Key Takeaways, What Appears Most Effective, Context and Applicability, Equity Considerations, Practice Considerations, Evidence Gaps and Unanswered Questions, and Sources Reviewed.']),
   ]);
 }
 
@@ -214,23 +198,20 @@ async function onGenerateSubmit(event: Event): Promise<void> {
 }
 
 export function render(): void {
-  const needsAuth = state.usage?.authenticated === false || state.usage?.verified === false;
   replaceChildren(root, [
     el('main', { class: 'shell' }, [
       el('header', {}, [
-        el('p', { class: 'eyebrow' }, ['American Health Equity Alliance · AHEA Tools']),
+        el('p', { class: 'eyebrow' }, ['AMERICAN HEALTH EQUITY ASSOCIATION']),
         el('h1', {}, ['Evidence in Practice']),
         el('p', { class: 'lede' }, ['Translate public health and health sciences literature into practical insights, equity considerations, implementation guidance, evidence gaps, and action-oriented takeaways for programs, policy, and practice.']),
       ]),
       el('div', { class: 'terracottaRule', 'aria-hidden': 'true' }, []),
       el('div', { class: 'workspace' }, [
-        el('aside', { class: 'sideRail' }, [
-          usagePanel(state.usage),
-          authPanel(needsAuth),
-          receivePanel(),
-        ]),
         el('div', { class: 'mainRail' }, [
           inputForm(),
+        ]),
+        el('aside', { class: 'sideRail' }, [
+          receivePanel(),
           results(state.output),
         ]),
       ]),
